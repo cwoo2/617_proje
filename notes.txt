@@ -1,0 +1,99 @@
+You're right about the name, but the bigger issue is structural: conv.cu currently contains only a __global__ kernel. There is no host function for Python to call and no pybind module, so conv_ext.my_convolution cannot exist. That's why it's confusing — you're looking for a return value that a kernel can't give you.
+The core idea
+A CUDA kernel always returns void. "Returning" a tensor means:
+1. The C++ wrapper allocates the output tensor with torch::empty(...).
+2. It passes out.data_ptr<float>() to the kernel.
+3. The kernel writes into that memory.
+4. The wrapper returns the torch::Tensor.
+Allocation lives on PyTorch's caching allocator, so the returned tensor is a normal PyTorch tensor. No copy is needed. Because the launch is async, also launch on PyTorch's current stream (at::cuda::getCurrentCUDAStream()), then return immediately — PyTorch's stream ordering handles the synchronization.
+// conv.cu
+#include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
+
+__global__ void conv3x3_kernel(const float* __restrict__ x,
+                               const float* __restrict__ w,
+                               const float* __restrict__ b,
+                               float* __restrict__ y,
+                               int C, int H, int W, int O) {
+  int ow = blockIdx.x * blockDim.x + threadIdx.x;
+  int oh = blockIdx.y * blockDim.y + threadIdx.y;
+  int z  = blockIdx.z;                    // n * O + oc
+  if (ow >= W || oh >= H) return;
+
+  int n = z / O, oc = z % O;
+  float sum = b[oc];
+
+  for (int ic = 0; ic < C; ++ic) {
+    const float* xp = x + (size_t)(n * C + ic) * H * W;
+    const float* wp = w + (oc * C + ic) * 9;
+    for (int ky = 0; ky < 3; ++ky) {
+      int ih = oh + ky - 1;
+      if (ih < 0 || ih >= H) continue;
+      for (int kx = 0; kx < 3; ++kx) {
+        int iw = ow + kx - 1;
+        if (iw >= 0 && iw < W)
+          sum += xp[ih * W + iw] * wp[ky * 3 + kx];
+      }
+    }
+  }
+  // every in-range thread writes: no uninitialized output pixels
+  y[((size_t)(n * O + oc) * H + oh) * W + ow] = sum;
+}
+
+torch::Tensor conv3x3(torch::Tensor input, torch::Tensor weight,
+                      torch::Tensor bias) {
+  TORCH_CHECK(input.is_cuda() && weight.is_cuda() && bias.is_cuda(),
+              "CUDA tensors required");
+  TORCH_CHECK(input.scalar_type() == torch::kFloat32 &&
+              weight.scalar_type() == torch::kFloat32 &&
+              bias.scalar_type() == torch::kFloat32, "float32 only");
+  TORCH_CHECK(input.dim() == 4 && weight.dim() == 4, "expected NCHW");
+  TORCH_CHECK(input.is_contiguous() && weight.is_contiguous() &&
+              bias.is_contiguous(), "contiguous required");
+
+  int N = input.size(0), C = input.size(1);
+  int H = input.size(2), W = input.size(3);
+  int O = weight.size(0);
+  TORCH_CHECK(weight.size(1) == C && weight.size(2) == 3 &&
+              weight.size(3) == 3, "bad weight shape");
+  TORCH_CHECK(bias.numel() == O, "bad bias shape");
+
+  auto out = torch::empty({N, O, H, W}, input.options());
+
+  dim3 block(16, 16);
+  dim3 grid((W + 15) / 16, (H + 15) / 16, N * O);
+  conv3x3_kernel<<<grid, block, 0, at::cuda::getCurrentCUDAStream()>>>(
+      input.data_ptr<float>(), weight.data_ptr<float>(),
+      bias.data_ptr<float>(), out.data_ptr<float>(), C, H, W, O);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+
+  return out;
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  m.def("conv3x3", &conv3x3, "3x3 conv, padding=1");
+}
+Then load() works as-is, because TORCH_EXTENSION_NAME is supplied by the build:
+conv_ext = load(
+    name="custom_conv",                      # just the build cache key
+    sources=[str(SOURCE_DIR / "conv.cu")],
+    extra_cuda_cflags=["-O3"],
+)
+...
+return conv_ext.conv3x3(x, weight, bias)
+Alternatively, keep the pattern the repo already had in git: load_inline with a declaration in cpp_sources, the definition in cuda_sources, and functions=["conv3x3"]. That auto-generates the pybind binding, so no PYBIND11_MODULE is needed. Either is fine; load + explicit binding is the more standard "C++ extension" shape.
+What this changes in train_stl10_thrust.py
+- forward(ctx, x, weight) is called with three tensors, and bias is used without being a parameter. It must be forward(ctx, x, weight, bias).
+- conv_ext.my_convolution(x, weight, x.shape[2], x.shape[3]) doesn't match the new API; call conv_ext.conv3x3(x, weight, bias) and let C++ read the shapes.
+- Your old backward (torch.nn.grad.conv2d_input/weight) is a perfectly reasonable shortcut; it keeps autograd correct while only the forward is custom.
+- sources=["conv.cu"] is relative to the process CWD; use the absolute SOURCE_DIR / "conv.cu" so it also works when launched from elsewhere.
+About the current kernel
+It isn't usable for the training layer yet:
+- It handles one 2D single-channel image, not NCHW; the layer is 32→64 channels.
+- It ignores bias.
+- It loops over one 3×3 mask, not weight[oc, ic, :, :].
+- It skips the border, so output is (H-2, W-2) while indexing with the input width. If you intend padding=1 and same-size output, every output pixel must be written and out-of-bounds reads treated as zero (as in the sketch above).
+The old thrust_conv.cu already shows the right host-side pattern (allocate torch::empty, launch, return); the missing piece there is just the binding.
+If you want, when you switch back to build mode I can do the full rewrite: NCHW kernel + binding, fix the Python forward signature, and run the existing check_custom_conv against nn.Conv2d. Want the full 32→64 layer, or first a single-channel kernel to verify the plumbing?
+Skipped: no changes made (Plan mode). Risk: grid.z = N*O is limited to 65535, which is fine for STL-10 batches but would need flattening for very large batch × output-channel counts.

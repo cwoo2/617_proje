@@ -8,35 +8,34 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from torch.utils.cpp_extension import load_inline
+from torch.utils.cpp_extension import load
 from torchvision import datasets, transforms
+
+from simple_cnn import KERNEL_SIZE
 
 if torch.cuda.is_available():
     major, minor = torch.cuda.get_device_capability()
     os.environ.setdefault("TORCH_CUDA_ARCH_LIST", f"{major}.{minor}")
 
 SOURCE_DIR = Path(__file__).resolve().parent
-CPP_SOURCE = (SOURCE_DIR / "thrust_conv.cpp").read_text()
-CUDA_SOURCE = (SOURCE_DIR / "thrust_conv.cu").read_text()
+CONV_SOURCE = (SOURCE_DIR / "conv.cu").read_text()
 
-thrust_ext = load_inline(
+conv_ext = load(
     name="thrust_conv_stl10",
-    cpp_sources=CPP_SOURCE,
-    cuda_sources=CUDA_SOURCE,
-    functions=["thrust_conv3x3"],
+    sources=["conv.cu"],
     extra_cuda_cflags=["-O3"],
-    verbose=False,
+    verbose=True,
 )
 
 
 class ThrustConv3x3Function(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, x, weight, bias):
+    def forward(ctx, x, weight):
         x = x.contiguous()
         weight = weight.contiguous()
         bias = bias.contiguous()
         ctx.save_for_backward(x, weight, bias)
-        return thrust_ext.thrust_conv3x3(x, weight, bias, 1)
+        return conv_ext.my_convolution(x, weight, x.shape[2], x.shape[3])
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -55,10 +54,10 @@ class ThrustConv3x3Function(torch.autograd.Function):
 class ThrustConv3x3(nn.Module):
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.weight = nn.Parameter(torch.empty(out_channels, in_channels, 3, 3))
+        self.weight = nn.Parameter(torch.empty(out_channels, in_channels, KERNEL_SIZE, KERNEL_SIZE))
         self.bias = nn.Parameter(torch.empty(out_channels))
         nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        bound = 1 / math.sqrt(in_channels * 9)
+        bound = 1 / math.sqrt(in_channels * KERNEL_SIZE ** 2)
         nn.init.uniform_(self.bias, -bound, bound)
 
     def forward(self, x):
