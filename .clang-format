@@ -1,4 +1,11 @@
 BasedOnStyle: LLVM
 IndentWidth: 4
 TabWidth: 4
-UseTab: ForIndentation
+UseTab: ForContinuationAndIndentation
+AlignAfterOpenBracket: AlwaysBreak
+BreakBeforeBraces: Allman
+BinPackArguments: false
+BinPackParameters: false
+AllowAllArgumentsOnNextLine: false
+AllowAllParametersOfDeclarationOnNextLine: false
+PenaltyReturnTypeOnItsOwnLine: 1000
