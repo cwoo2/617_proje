@@ -1,64 +1,26 @@
-import math
-from pathlib import Path
-
 import torch
 import torch.nn as nn
-from torch.utils.cpp_extension import load
 
-KERNEL_SIZE = 3
-
-conv_ext = load(
-    name="simple_cnn_conv",
-    sources=[str(Path(__file__).resolve().parent / "conv.cu")],
-    extra_cuda_cflags=["-O3"],
-)
-
-
-class Conv3x3Function(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, x, weight):
-        x = x.contiguous()
-        weight = weight.contiguous()
-        ctx.save_for_backward(x, weight)
-        return conv_ext.my_convolution(x, weight)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        x, weight = ctx.saved_tensors
-        grad_output = grad_output.contiguous()
-        grad_input = torch.nn.grad.conv2d_input(x.shape, weight, grad_output)
-        grad_weight = torch.nn.grad.conv2d_weight(x, weight.shape, grad_output)
-        return grad_input, grad_weight
-
-
-class CustomConv2d(nn.Module):
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        self.weight = nn.Parameter(
-            torch.empty(out_channels, in_channels, KERNEL_SIZE, KERNEL_SIZE)
-        )
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-
-    def forward(self, x):
-        return Conv3x3Function.apply(x, self.weight)
+from conv3x3 import KERNEL_SIZE, Conv3x3Function, CustomConv2d
+from relu import CustomReLU
 
 
 class SimpleCNNCustom(nn.Module):
     def __init__(self, num_classes=10):
         super().__init__()
 
-        # Same as SimpleCNN, but every conv is the custom 3x3 kernel (no padding)
+        # Same as SimpleCNN, but convs and relus are the custom kernels (no padding)
         self.conv1 = CustomConv2d(3, 32)
         self.bn1 = nn.BatchNorm2d(32)
-        self.relu1 = nn.ReLU(inplace=True)
+        self.relu1 = CustomReLU()
         self.mp1 = nn.MaxPool2d(2)
         self.conv2 = CustomConv2d(32, 64)
         self.bn2 = nn.BatchNorm2d(64)
-        self.relu2 = nn.ReLU(inplace=True)
+        self.relu2 = CustomReLU()
         self.mp2 = nn.MaxPool2d(2)
         self.conv3 = CustomConv2d(64, 128)
         self.bn3 = nn.BatchNorm2d(128)
-        self.relu3 = nn.ReLU(inplace=True)
+        self.relu3 = CustomReLU()
         self.mp3 = nn.MaxPool2d(2)
         self.aap = nn.AdaptiveAvgPool2d(1)
         self.flatten = nn.Flatten()
@@ -88,9 +50,10 @@ class SimpleCNNCustom(nn.Module):
 
 
 if __name__ == "__main__":
-    # Compares the custom kernel against nn.Conv2d (padding=0) for fwd and bwd.
+    # Compares the custom kernels against their torch equivalents for fwd and bwd.
     torch.manual_seed(0)
     device = "cuda"
+
     x = torch.randn(4, 3, 20, 20, device=device)
     ref = nn.Conv2d(3, 8, KERNEL_SIZE, bias=False).to(device)
     custom = CustomConv2d(3, 8).to(device)
