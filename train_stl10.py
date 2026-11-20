@@ -23,7 +23,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--custom", type=bool, default=False)
+    parser.add_argument("--custom", action="store_true")
     return parser.parse_args()
 
 
