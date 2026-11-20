@@ -7,6 +7,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 from simple_cnn import SimpleCNN
+from simple_cnn_custom import SimpleCNNCustom
 
 activation = {}
 def get_activation(name):
@@ -22,6 +23,7 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-3)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--custom", type=bool, default=False)
     return parser.parse_args()
 
 
@@ -83,7 +85,8 @@ def main():
         pin_memory=device.type == "cuda",
     )
 
-    model = SimpleCNN().to(device)
+    print(f"Using {'custom' if args.custom else 'library'} CNN implementation")
+    model = SimpleCNNCustom().to(device) if args.custom else SimpleCNN().to(device)
     model.conv1.register_forward_hook(get_activation("conv1"))
     model.conv2.register_forward_hook(get_activation("conv2"))
     model.conv3.register_forward_hook(get_activation("conv3"))

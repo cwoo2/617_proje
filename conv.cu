@@ -1,4 +1,5 @@
-#include <__clang_cuda_builtin_vars.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAException.h>
 #include <cmath>
 #include <torch/extension.h>
 
@@ -155,7 +156,6 @@ __global__ void conv2d_kernel(
 	const float *const input,
 	const float *const weights,
 	float *output,
-	const int N,
 	const int C_in,
 	const int H,
 	const int W,
@@ -167,11 +167,17 @@ __global__ void conv2d_kernel(
 	// tensor is 4D but we only get 3 dims with the grid, so
 	// N and C are folded into the grid's z dim
 	const int nc = blockIdx.z;
-	const int n = blockIdx.z / C_out;
-	const int c = blockIdx.z % C_out;
+	const int n = nc / C_out;
+	const int c = nc % C_out;
 
 	const int H_out = H - (KERNEL_HEIGHT - 1);
 	const int W_out = W - (KERNEL_WIDTH - 1);
+
+	if (x >= W_out || y >= H_out)
+	{
+		return;
+	}
+
 	const int feature_map_size = W_out * H_out;
 	const int kernel_size = KERNEL_WIDTH * KERNEL_HEIGHT;
 	const int image_addr = n * C_in * H * W;
@@ -204,7 +210,7 @@ __global__ void conv2d_kernel(
 	}
 }
 
-torch::Tensor conv3x3(torch::Tensor input, torch::Tensor weight)
+torch::Tensor my_convolution(torch::Tensor input, torch::Tensor weight)
 {
 	// input is  N, C, H, W
 	// weight is O, C, 3, 3
@@ -240,14 +246,23 @@ torch::Tensor conv3x3(torch::Tensor input, torch::Tensor weight)
 	const int grid_y =
 		std::ceil(static_cast<double>(H - (KERNEL_HEIGHT - 1)) / BLOCK_Y);
 	const int grid_z = N * C_out;
-	conv2d_kernel<<<dim3(grid_x, grid_y, grid_z), dim3(BLOCK_X, BLOCK_Y, 1)>>>(
+	conv2d_kernel<<<
+		dim3(grid_x, grid_y, grid_z),
+		dim3(BLOCK_X, BLOCK_Y, 1),
+		0,
+		at::cuda::getCurrentCUDAStream()>>>(
 		input.data_ptr<float>(),
 		weight.data_ptr<float>(),
 		output.data_ptr<float>(),
-		N,
 		C_in,
 		H,
 		W,
 		C_out);
+	C10_CUDA_KERNEL_LAUNCH_CHECK();
 	return output;
+}
+
+PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
+{
+	m.def("my_convolution", &my_convolution, "3x3 conv, padding=0");
 }
