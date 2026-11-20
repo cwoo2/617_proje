@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from conv3x3 import KERNEL_SIZE, Conv3x3Function, CustomConv2d
-from maxpool import CustomMaxPool2d
-from relu import CustomReLU
+from layers.python.conv import KERNEL_SIZE, Conv3x3Function, CustomConv2d
+from layers.python.maxpool import CustomMaxPool2d
+from layers.python.relu import CustomReLU
 
 
 class SimpleCNNCustom(nn.Module):

@@ -6,8 +6,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
-from simple_cnn import SimpleCNN
-from simple_cnn_custom import SimpleCNNCustom
+from cnn.simple_cnn import SimpleCNN
+from cnn.simple_cnn_custom import SimpleCNNCustom
 
 activation = {}
 def get_activation(name):

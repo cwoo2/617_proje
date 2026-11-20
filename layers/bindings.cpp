@@ -2,7 +2,10 @@
 
 torch::Tensor my_convolution(torch::Tensor input, torch::Tensor weight);
 torch::Tensor my_relu(torch::Tensor input);
-torch::Tensor my_maxpool(torch::Tensor input, const int kernel_size, int stride);
+torch::Tensor my_maxpool(
+	torch::Tensor input,
+	const int kernel_size,
+	int stride);
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m)
 {
