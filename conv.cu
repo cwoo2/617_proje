@@ -9,26 +9,6 @@
 #define BLOCK_X 16
 #define BLOCK_Y 16
 
-__global__ void my_convolution_kernel(
-	const float *x,
-	float *output,
-	const float *weight,
-	const int C,
-	const int H,
-	const int W,
-	const int O)
-{
-	// Calculate the global thread coordinates
-	const int xp = blockIdx.x * blockDim.x + threadIdx.x;
-	const int yp = blockIdx.y * blockDim.y + threadIdx.y;
-	const int zp = blockIdx.z;
-
-	if (xp >= W || yp >= H)
-	{
-		return;
-	}
-}
-
 __device__ void cross_correlation(
 	const float *const input,
 	const float *const kernel,

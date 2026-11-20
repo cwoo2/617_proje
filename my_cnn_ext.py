@@ -9,6 +9,7 @@ my_cnn = load(
     sources=[
         str(_SOURCE_DIR / "conv.cu"),
         str(_SOURCE_DIR / "relu.cu"),
+        str(_SOURCE_DIR / "maxpool.cu"),
         str(_SOURCE_DIR / "bindings.cpp"),
     ],
     extra_cuda_cflags=["-O3"],

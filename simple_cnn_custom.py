@@ -1,7 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from conv3x3 import KERNEL_SIZE, Conv3x3Function, CustomConv2d
+from maxpool import CustomMaxPool2d
 from relu import CustomReLU
 
 
@@ -13,15 +15,15 @@ class SimpleCNNCustom(nn.Module):
         self.conv1 = CustomConv2d(3, 32)
         self.bn1 = nn.BatchNorm2d(32)
         self.relu1 = CustomReLU()
-        self.mp1 = nn.MaxPool2d(2)
+        self.mp1 = CustomMaxPool2d(2)
         self.conv2 = CustomConv2d(32, 64)
         self.bn2 = nn.BatchNorm2d(64)
         self.relu2 = CustomReLU()
-        self.mp2 = nn.MaxPool2d(2)
+        self.mp2 = CustomMaxPool2d(2)
         self.conv3 = CustomConv2d(64, 128)
         self.bn3 = nn.BatchNorm2d(128)
         self.relu3 = CustomReLU()
-        self.mp3 = nn.MaxPool2d(2)
+        self.mp3 = CustomMaxPool2d(2)
         self.aap = nn.AdaptiveAvgPool2d(1)
         self.flatten = nn.Flatten()
         self.fc = nn.Linear(128, num_classes)
@@ -81,3 +83,18 @@ if __name__ == "__main__":
         "grad max err (input, weight):",
         [(a - b).abs().max().item() for a, b in zip(grads_ref, grads_custom)],
     )
+
+    # maxpool fwd/bwd
+    p = torch.randn(4, 8, 11, 11, device=device)
+    y_ref = F.max_pool2d(p, 2)
+    y_custom = CustomMaxPool2d(2)(p)
+    g = torch.randn_like(y_ref)
+
+    pr = p.clone().requires_grad_()
+    pc = p.clone().requires_grad_()
+    grad_ref = torch.autograd.grad((F.max_pool2d(pr, 2) * g).sum(), pr)[0]
+    grad_custom = torch.autograd.grad((CustomMaxPool2d(2)(pc) * g).sum(), pc)[0]
+
+    print("maxpool shape:", y_ref.shape, y_custom.shape)
+    print("maxpool forward max err:", (y_ref - y_custom).abs().max().item())
+    print("maxpool grad max err:", (grad_ref - grad_custom).abs().max().item())
